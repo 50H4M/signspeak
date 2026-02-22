@@ -9,10 +9,23 @@ from PIL import Image, ImageTk
 import threading
 import time
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
-model_dict = pickle.load(open('./model.p', 'rb'))
-model = model_dict['model']
+# --- High-DPI Fix for Windows (Prevents blurry text) ---
+try:
+    from ctypes import windll
+    windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
+
+# Load Model
+try:
+    model_dict = pickle.load(open('./model.p', 'rb'))
+    model = model_dict['model']
+except FileNotFoundError:
+    print("Error: 'model.p' not found. Please ensure your model file is in the same directory.")
+    exit()
 
 # Mediapipe setup
 mp_hands = mp.solutions.hands
@@ -23,13 +36,12 @@ hands = mp_hands.Hands(static_image_mode=False, min_detection_confidence=0.5, ma
 # Text-to-Speech setup
 engine = pyttsx3.init()
 
-# label mapping
+# Label mapping
 labels_dict = {
     0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'J', 10: 'K', 11: 'L', 12: 'M',
     13: 'N', 14: 'O', 15: 'P', 16: 'Q', 17: 'R', 18: 'S', 19: 'T', 20: 'U', 21: 'V', 22: 'W', 23: 'X', 24: 'Y',
     25: 'Z', 26: '0', 27: '1', 28: '2', 29: '3', 30: '4', 31: '5', 32: '6', 33: '7', 34: '8', 35: '9',
-    36: ' ',
-    37: '.'
+    36: ' ', 37: '.'
 }
 expected_features = 42
 
@@ -39,21 +51,40 @@ stable_char = None
 word_buffer = ""
 sentence = ""
 
-# Speak text in a separate thread
 def speak_text(text):
     def tts_thread():
         engine.say(text)
         engine.runAndWait()
-
     threading.Thread(target=tts_thread, daemon=True).start()
 
 
-# GUI Setup
+# --- GUI Setup ---
 root = tk.Tk()
-root.title("Sign Language to Speech Conversion")
-root.geometry("1300x650")  # Adjusted window size for additional button
-root.configure(bg="#2c2f33")  # Dark theme
-root.resizable(False, False)  # Disable resizing
+root.title("Sign Speak")
+
+# --- Full Screen Configuration ---
+root.attributes('-fullscreen', True)
+root.geometry("1400x750") # Fallback size if user exits full screen
+root.configure(bg="#ffffff")
+
+# Toggle Full Screen with F11 and Escape with Esc
+def toggle_fullscreen(event=None):
+    is_fullscreen = root.attributes('-fullscreen')
+    root.attributes('-fullscreen', not is_fullscreen)
+
+def exit_fullscreen(event=None):
+    root.attributes('-fullscreen', False)
+
+root.bind("<F11>", toggle_fullscreen)
+root.bind("<Escape>", exit_fullscreen)
+
+# Theme Colors & Fonts
+BG_COLOR = "#ffffff"          # White Background
+TEXT_COLOR = "#1f2937"        # Dark Gray Text
+ACCENT_BLUE = "#2563eb"       # Modern Blue for Buttons
+BUTTON_FG = "#ffffff"         # White text on buttons
+FONT_MAIN = ("Helvetica", 24) # Increased font sizes for fullscreen
+FONT_BOLD = ("Helvetica", 28, "bold")
 
 # Variables for GUI
 current_alphabet = StringVar(value="N/A")
@@ -61,42 +92,55 @@ current_word = StringVar(value="N/A")
 current_sentence = StringVar(value="N/A")
 is_paused = StringVar(value="False")
 
-# Title
-title_label = Label(root, text="Sign Language to Speech Conversion", font=("Arial", 28, "bold"), fg="#ffffff", bg="#2c2f33")
-title_label.grid(row=0, column=0, columnspan=2, pady=10)
+# --- Layout Frames (Centered for Full Screen) ---
+# Outer frame to keep everything centered
+center_frame = Frame(root, bg=BG_COLOR)
+center_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-# Layout Frames
-video_frame = Frame(root, bg="#2c2f33", bd=5, relief="solid", width=500, height=400)  # Reduced camera feed size
-video_frame.grid(row=1, column=0, rowspan=3, padx=20, pady=20)
-video_frame.grid_propagate(False)  # Prevent resizing
+header_frame = Frame(center_frame, bg=BG_COLOR)
+header_frame.pack(side="top", fill="x", pady=(0, 40))
 
-content_frame = Frame(root, bg="#2c2f33")
-content_frame.grid(row=1, column=1, sticky="n", padx=(20, 40), pady=(60, 20))  # Added right-side margin
+main_content_frame = Frame(center_frame, bg=BG_COLOR)
+main_content_frame.pack(expand=True, fill="both")
 
-button_frame = Frame(root, bg="#2c2f33")
-button_frame.grid(row=3, column=1, pady=(10, 20),padx=(10, 20), sticky="n")  # Adjusted to fit the new button
+left_frame = Frame(main_content_frame, bg=BG_COLOR)
+left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 60))
 
-# Video feed
-video_label = tk.Label(video_frame)
-video_label.pack(expand=True)
+right_frame = Frame(main_content_frame, bg=BG_COLOR)
+right_frame.grid(row=0, column=1, sticky="nsew")
 
-# Labels
-Label(content_frame, text="Current Alphabet:", font=("Arial", 20), fg="#ffffff", bg="#2c2f33").pack(anchor="w", pady=(0, 10))
-Label(content_frame, textvariable=current_alphabet, font=("Arial", 24, "bold"), fg="#1abc9c", bg="#2c2f33").pack(anchor="center")
+button_frame = Frame(right_frame, bg=BG_COLOR)
+button_frame.pack(side="bottom", anchor="w", pady=(40, 0))
 
-Label(content_frame, text="Current Word:", font=("Arial", 20), fg="#ffffff", bg="#2c2f33").pack(anchor="w", pady=(20, 10))
-Label(content_frame, textvariable=current_word, font=("Arial", 20), fg="#f39c12", bg="#2c2f33", wraplength=500, justify="left").pack(anchor="center")
+# --- Titles ---
+Label(header_frame, text="Sign Speak", font=("Helvetica", 48, "bold"), fg=ACCENT_BLUE, bg=BG_COLOR).pack()
+Label(header_frame, text="Giving voice to every gesture", font=("Helvetica", 20, "italic"), fg="#6b7280", bg=BG_COLOR).pack()
 
-Label(content_frame, text="Current Sentence:", font=("Arial", 20), fg="#ffffff", bg="#2c2f33").pack(anchor="w", pady=(20, 10))
-Label(content_frame, textvariable=current_sentence, font=("Arial", 20), fg="#9b59b6", bg="#2c2f33", wraplength=500, justify="left").pack(anchor="center")
+# --- Video Feed ---
+# Increased video feed size slightly for full screen
+video_container = Frame(left_frame, bg="#e5e7eb", bd=2, relief="flat", width=800, height=600)
+video_container.pack()
+video_container.pack_propagate(False)
+video_label = tk.Label(video_container, bg="#000000")
+video_label.pack(expand=True, fill="both")
 
+# --- Right Panel Labels ---
+def create_display_section(parent, title_text, string_var):
+    Label(parent, text=title_text, font=FONT_MAIN, fg=TEXT_COLOR, bg=BG_COLOR).pack(anchor="w", pady=(20, 5))
+    Label(parent, textvariable=string_var, font=FONT_BOLD, fg=ACCENT_BLUE, bg=BG_COLOR, wraplength=700, justify="left").pack(anchor="w")
+
+create_display_section(right_frame, "Current Alphabet:", current_alphabet)
+create_display_section(right_frame, "Current Word:", current_word)
+create_display_section(right_frame, "Current Sentence:", current_sentence)
+
+# --- Button Functions ---
 def reset_sentence():
     global word_buffer, sentence
     word_buffer = ""
     sentence = ""
     current_word.set("N/A")
     current_sentence.set("N/A")
-    current_alphabet.set("N/A")  # Clear current alphabet display
+    current_alphabet.set("N/A")
 
 def toggle_pause():
     if is_paused.get() == "False":
@@ -106,30 +150,51 @@ def toggle_pause():
         is_paused.set("False")
         pause_button.config(text="Pause")
 
-# Buttons
-Button(button_frame, text="Reset Sentence", font=("Arial", 16), command=reset_sentence, bg="#e74c3c", fg="#ffffff", relief="flat", height=2, width=14).grid(row=0, column=0, padx=10)  # Increased padding
-pause_button = Button(button_frame, text="Pause", font=("Arial", 16), command=toggle_pause, bg="#3498db", fg="#ffffff", relief="flat", height=2, width=12)
-pause_button.grid(row=0, column=1, padx=10)  # Consistent padding
-speak_button = Button(button_frame, text="Speak Sentence", font=("Arial", 16), command=lambda: speak_text(current_sentence.get()), bg="#27ae60", fg="#ffffff", relief="flat", height=2, width=14)
-speak_button.grid(row=0, column=2, padx=10)  # Added new button with proper spacing
+def backspace(event=None): # Added event parameter to allow keyboard binding
+    global word_buffer, sentence
+    if len(word_buffer) > 0:
+        word_buffer = word_buffer[:-1]
+        current_word.set(word_buffer if word_buffer else "N/A")
+    elif len(sentence) > 0:
+        sentence = sentence[:-1]
+        current_sentence.set(sentence if sentence else "N/A")
 
-# Video Capture
+# Bind the physical backspace key to the backspace function
+root.bind("<BackSpace>", backspace)
+
+# --- Buttons ---
+btn_style = {"font": ("Helvetica", 16, "bold"), "bg": ACCENT_BLUE, "fg": BUTTON_FG, "relief": "flat", "height": 2, "width": 14, "cursor": "hand2"}
+
+speak_button = Button(button_frame, text="Speak", command=lambda: speak_text(current_sentence.get()), **btn_style)
+speak_button.grid(row=0, column=0, padx=(0, 15), pady=15)
+
+pause_button = Button(button_frame, text="Pause", command=toggle_pause, **btn_style)
+pause_button.grid(row=0, column=1, padx=15, pady=15)
+
+backspace_button = Button(button_frame, text="Backspace", command=backspace, **btn_style)
+backspace_button.grid(row=1, column=0, padx=(0, 15), pady=15)
+
+reset_button = Button(button_frame, text="Reset", command=reset_sentence, **btn_style)
+reset_button.grid(row=1, column=1, padx=15, pady=15)
+
+# --- Video Capture & Processing ---
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
 
-# Set camera feed size
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 400)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 300)
-
-# Variables for stabilization timing
 last_registered_time = time.time()
-registration_delay = 1.5  # Minimum delay (in seconds) before registering the same character again
+registration_delay = 1.5 
 
 def process_frame():
     global stabilization_buffer, stable_char, word_buffer, sentence, last_registered_time
 
     ret, frame = cap.read()
     if not ret:
+        root.after(10, process_frame)
         return
+
+    # Mirror the frame horizontally
+    frame = cv2.flip(frame, 1)
 
     if is_paused.get() == "True":
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -161,39 +226,34 @@ def process_frame():
                 data_aux.append(x - min(x_))
                 data_aux.append(y - min(y_))
 
-            # Ensure valid data
             if len(data_aux) < expected_features:
                 data_aux.extend([0] * (expected_features - len(data_aux)))
             elif len(data_aux) > expected_features:
                 data_aux = data_aux[:expected_features]
 
-            # Predict gesture
             prediction = model.predict([np.asarray(data_aux)])
             predicted_character = labels_dict[int(prediction[0])]
 
-            # Stabilization logic
             stabilization_buffer.append(predicted_character)
-            if len(stabilization_buffer) > 30:  # Buffer size for 1 second
+            if len(stabilization_buffer) > 30:
                 stabilization_buffer.pop(0)
 
-            if stabilization_buffer.count(predicted_character) > 25:  # Stabilization threshold
-                # Register the character only if enough time has passed since the last registration
+            if stabilization_buffer.count(predicted_character) > 25:
                 current_time = time.time()
                 if current_time - last_registered_time > registration_delay:
                     stable_char = predicted_character
-                    last_registered_time = current_time  # Update last registered time
+                    last_registered_time = current_time
                     current_alphabet.set(stable_char)
 
-                    # Handle word and sentence formation
                     if stable_char == ' ':
-                        if word_buffer.strip():  # Speak word only if not empty
+                        if word_buffer.strip():
                             speak_text(word_buffer)
                             sentence += word_buffer + " "
                             current_sentence.set(sentence.strip())
                         word_buffer = ""
                         current_word.set("N/A")
                     elif stable_char == '.':
-                        if word_buffer.strip():  # Speak word before adding to sentence
+                        if word_buffer.strip():
                             speak_text(word_buffer)
                             sentence += word_buffer + "."
                             current_sentence.set(sentence.strip())
@@ -203,15 +263,19 @@ def process_frame():
                         word_buffer += stable_char
                         current_word.set(word_buffer)
 
-            # Draw landmarks and bounding box
-            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                                      mp_drawing_styles.get_default_hand_landmarks_style(),
-                                      mp_drawing_styles.get_default_hand_connections_style())
+            # Draw landmarks
+            mp_drawing.draw_landmarks(
+                frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                mp_drawing_styles.get_default_hand_landmarks_style(),
+                mp_drawing_styles.get_default_hand_connections_style()
+            )
 
-    # Draw alphabet on the video feed
-    cv2.putText(frame, f"Alphabet: {current_alphabet.get()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)  # Yellow color
+    # Draw a clean box for the detected alphabet on the video
+    cv2.rectangle(frame, (10, 10), (220, 60), (255, 255, 255), -1)
+    cv2.putText(frame, f"Detected: {current_alphabet.get()}", (20, 45), 
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (235, 99, 37), 2)
 
-    # Update video feed in GUI
+    # Update GUI video
     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = Image.fromarray(img)
     img_tk = ImageTk.PhotoImage(image=img)
@@ -220,7 +284,6 @@ def process_frame():
 
     root.after(10, process_frame)
 
-
-# Start processing frames
+# Start loop
 process_frame()
 root.mainloop()
