@@ -120,28 +120,45 @@ def get_voice_input():
 
 # --- RESPONSIVE ROUNDED CARD ---
 class ResponsiveRoundedCard(tk.Canvas):
-    def __init__(self, parent, bg_color, radius, **kwargs):
+    def __init__(self, parent, bg_color, radius, border_color=None, shadow_color=None, **kwargs):
         super().__init__(parent, highlightthickness=0, bg=parent['bg'], **kwargs)
         self.radius = radius
         self.fill_color = bg_color
+        self.border_color = border_color
+        self.shadow_color = shadow_color
         self.inner_frame = tk.Frame(self, bg=bg_color)
         self.window_id = self.create_window(0, 0, window=self.inner_frame, anchor="nw")
         self.bind('<Configure>', self._on_resize)
+
+    def _draw_rounded(self, x1, y1, x2, y2, r, color, tags):
+        r = min(r, (x2-x1)//2, (y2-y1)//2)
+        self.create_oval(x1, y1, x1+2*r, y1+2*r, fill=color, outline="", tags=tags)
+        self.create_oval(x2-2*r, y1, x2, y1+2*r, fill=color, outline="", tags=tags)
+        self.create_oval(x1, y2-2*r, x1+2*r, y2, fill=color, outline="", tags=tags)
+        self.create_oval(x2-2*r, y2-2*r, x2, y2, fill=color, outline="", tags=tags)
+        self.create_rectangle(x1+r, y1, x2-r, y2, fill=color, outline="", tags=tags)
+        self.create_rectangle(x1, y1+r, x2, y2-r, fill=color, outline="", tags=tags)
 
     def _on_resize(self, event):
         self.delete("bg")
         w, h = event.width, event.height
         if w < 20 or h < 20: return
         r = self.radius
-        
-        self.create_oval(0, 0, 2*r, 2*r, fill=self.fill_color, outline="", tags="bg")
-        self.create_oval(w-2*r, 0, w, 2*r, fill=self.fill_color, outline="", tags="bg")
-        self.create_oval(0, h-2*r, 2*r, h, fill=self.fill_color, outline="", tags="bg")
-        self.create_oval(w-2*r, h-2*r, w, h, fill=self.fill_color, outline="", tags="bg")
-        self.create_rectangle(r, 0, w-r, h, fill=self.fill_color, outline="", tags="bg")
-        self.create_rectangle(0, r, w, h-r, fill=self.fill_color, outline="", tags="bg")
+
+        # Subtle drop shadow
+        if self.shadow_color:
+            self._draw_rounded(4, 6, w+1, h+1, r, self.shadow_color, "bg")
+
+        # Border ring
+        if self.border_color:
+            self._draw_rounded(0, 0, w, h, r, self.border_color, "bg")
+            bw = 2
+            self._draw_rounded(bw, bw, w-bw, h-bw, max(r-bw, 1), self.fill_color, "bg")
+        else:
+            self._draw_rounded(0, 0, w, h, r, self.fill_color, "bg")
+
         self.tag_lower("bg")
-        
+
         # This locks the internal frame so elements can NEVER push past the bottom
         pad = 25
         self.coords(self.window_id, pad, pad)
@@ -163,16 +180,16 @@ class RoundedButton(tk.Canvas):
         self.shadow_color = shadow_color
         self.is_pressed = False
         self.is_hovered = False
+        self._anim_id = None
         self.main_tag = f"main_{id(self)}"
         self.shadow_tag = f"shadow_{id(self)}"
         
         x1, y1 = self.pad, self.pad
         x2, y2 = x1 + width, y1 + height
 
-        self.draw_hd_rounded_rect(x1, y1+5, x2, y2, radius=20, fill_color=shadow_color, tags=self.shadow_tag)
-        self.draw_hd_rounded_rect(x1, y1, x2, y2-5, radius=20, fill_color=color, tags=self.main_tag)
+        self.draw_hd_rounded_rect(x1, y1+5, x2, y2, radius=22, fill_color=shadow_color, tags=self.shadow_tag)
+        self.draw_hd_rounded_rect(x1, y1, x2, y2-5, radius=22, fill_color=color, tags=self.main_tag)
         
-        # Shrunk font slightly so the emoji + long words fit perfectly
         self.text_id = self.create_text(x1 + width/2, y1 + (height-5)/2, text=text, fill="#FFFFFF", font=("Segoe UI", 15, "bold"))
         
         self.bind("<ButtonPress-1>", self.on_press)
@@ -193,6 +210,23 @@ class RoundedButton(tk.Canvas):
         self.create_rectangle(x1+radius, y1, x2-radius, y2, fill=fill_color, outline="", tags=tags)
         self.create_rectangle(x1, y1+radius, x2, y2-radius, fill=fill_color, outline="", tags=tags)
 
+    def _lerp_color(self, c1, c2, t):
+        r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+        r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+        r = int(r1 + (r2 - r1) * t)
+        g = int(g1 + (g2 - g1) * t)
+        b = int(b1 + (b2 - b1) * t)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _animate_color(self, from_color, to_color, step=0, steps=7):
+        if self._anim_id is not None:
+            self.after_cancel(self._anim_id)
+            self._anim_id = None
+        color = self._lerp_color(from_color, to_color, step / steps)
+        self.itemconfig(self.main_tag, fill=color)
+        if step < steps:
+            self._anim_id = self.after(18, lambda: self._animate_color(from_color, to_color, step + 1, steps))
+
     def on_press(self, event):
         if not self.is_pressed:
             self.is_pressed = True
@@ -209,11 +243,11 @@ class RoundedButton(tk.Canvas):
 
     def on_hover(self, event):
         self.is_hovered = True
-        self.itemconfig(self.main_tag, fill=self.hover_color)
+        self._animate_color(self.color, self.hover_color)
 
     def on_leave(self, event):
         self.is_hovered = False
-        self.itemconfig(self.main_tag, fill=self.color)
+        self._animate_color(self.hover_color, self.color)
         if self.is_pressed:
             self.on_release(event)
             
@@ -230,7 +264,7 @@ class RoundedButton(tk.Canvas):
 
 
 class TextToggleSwitch(tk.Canvas):
-    def __init__(self, parent, command=None, width=320, height=55, bg_color="#FFFFFF", on_color="#1A5276", off_color="#5DADE2"):
+    def __init__(self, parent, command=None, width=320, height=55, bg_color="#FFFFFF", on_color="#1D4ED8", off_color="#3B82F6"):
         self.pad = 8
         canvas_width = width + (self.pad * 2)
         canvas_height = height + (self.pad * 2)
@@ -250,7 +284,7 @@ class TextToggleSwitch(tk.Canvas):
         self.draw_hd_rounded_rect(x1, y1, x2, y2, radius=25, fill_color=self.off_color)
         self.knob_radius = height - 12
         self.oval = self.create_oval(x1+6, y1+6, x1+6 + self.knob_radius, y1+6 + self.knob_radius, fill="#FFFFFF", outline="")
-        self.text_id = self.create_text(x1 + width/2 + 25, y1 + height/2, text="Spelling Mode", fill="#FFFFFF", font=("Segoe UI", 16, "bold"))
+        self.text_id = self.create_text(x1 + width/2 + 25, y1 + height/2, text="Spelling Mode", fill="#FFFFFF", font=("Segoe UI", 15, "bold"))
         
         self.bind("<ButtonPress-1>", self.toggle)
         self.tag_bind(self.text_id, "<ButtonPress-1>", self.toggle)
@@ -294,16 +328,22 @@ try:
 except tk.TclError:
     root.attributes('-zoomed', True)
 
-BG_MAIN = "#EBF5FB"      
-CARD_BG = "#FFFFFF"      
-TEXT_BLACK = "#000000"   
-TEXT_MED = "#21618C"     
-PRIMARY_BLUE = "#2980B9" 
+BG_MAIN = "#EFF6FF"       # Cool blue-white
+CARD_BG = "#FFFFFF"       # Pure white cards
+CARD_BORDER = "#BFDBFE"   # Soft blue border
+CARD_SHADOW = "#DBEAFE"   # Very soft shadow
+TEXT_BLACK = "#0F172A"    # Deep slate (richer than pure black)
+TEXT_MED = "#1D4ED8"      # Vibrant blue
+TEXT_LIGHT = "#64748B"    # Muted slate for secondary text
+PRIMARY_BLUE = "#2563EB"  # Main vibrant blue
+ACCENT_PURPLE = "#7C3AED" # Purple accent
+ACCENT_TEAL = "#0D9488"   # Teal accent
+ACCENT_EMERALD = "#059669" # Emerald green
 
 FONT_TITLE = ("Segoe UI", 56, "bold")
-FONT_SUBTITLE = ("Segoe UI", 22, "italic")
+FONT_SUBTITLE = ("Segoe UI", 20, "italic")
 FONT_LABEL = ("Segoe UI", 18, "bold")
-FONT_VALUE = ("Segoe UI", 28, "bold")
+FONT_VALUE = ("Segoe UI", 30, "bold")
 
 root.configure(bg=BG_MAIN)
 
@@ -316,11 +356,21 @@ is_sentence_mode = StringVar(value="False")
 header_frame = Frame(root, bg=BG_MAIN)
 header_frame.pack(fill="x", pady=(20, 10))
 
-title_label = Label(header_frame, text="SignSpeak", font=FONT_TITLE, fg=TEXT_BLACK, bg=BG_MAIN)
+title_label = Label(header_frame, text="✋ SignSpeak", font=FONT_TITLE, fg=TEXT_BLACK, bg=BG_MAIN)
 title_label.pack()
 
-subtitle_label = Label(header_frame, text="Giving voice to every gesture", font=FONT_SUBTITLE, fg=TEXT_MED, bg=BG_MAIN)
+subtitle_label = Label(header_frame, text="Giving voice to every gesture", font=FONT_SUBTITLE, fg=TEXT_LIGHT, bg=BG_MAIN)
 subtitle_label.pack()
+
+# Decorative separator line
+sep_canvas = tk.Canvas(header_frame, height=4, bg=BG_MAIN, highlightthickness=0, width=260)
+sep_canvas.pack(pady=(4, 8))
+
+def _draw_separator(event):
+    sep_canvas.delete("all")
+    sep_canvas.create_rectangle(0, 0, event.width, 4, fill=PRIMARY_BLUE, outline="")
+
+sep_canvas.bind("<Configure>", _draw_separator)
 
 # --- VIEW SWITCHER LOGIC ---
 is_chat_mode = tk.BooleanVar(value=False)
@@ -338,7 +388,7 @@ def toggle_view():
         is_chat_mode.set(True)
     root.update_idletasks()
 
-toggle_view_btn = RoundedButton(header_frame, "💬 AI Teacher", toggle_view, width=180, height=50, color=PRIMARY_BLUE, bg_color=BG_MAIN)
+toggle_view_btn = RoundedButton(header_frame, "💬 AI Teacher", toggle_view, width=180, height=50, color=PRIMARY_BLUE, hover_color="#1D4ED8", shadow_color="#1E3A8A", bg_color=BG_MAIN)
 toggle_view_btn.pack(pady=10)
 
 # --- VIEW CONTAINER ---
@@ -355,7 +405,7 @@ main_frame.grid_columnconfigure(1, weight=1)
 main_frame.grid_rowconfigure(0, weight=1)
 
 # --- LEFT BLOCK (Responsive Rounded Video Card) ---
-left_card = ResponsiveRoundedCard(main_frame, bg_color=CARD_BG, radius=35)
+left_card = ResponsiveRoundedCard(main_frame, bg_color=CARD_BG, radius=35, border_color=CARD_BORDER, shadow_color=CARD_SHADOW)
 left_card.grid(row=0, column=0, padx=(0, 20), sticky="nsew")
 
 video_container = Frame(left_card.inner_frame, bg=CARD_BG)
@@ -370,7 +420,7 @@ mask_draw = ImageDraw.Draw(rounded_mask)
 mask_draw.rounded_rectangle((0, 0, video_width, video_height), radius=40, fill=255)
 
 # --- RIGHT BLOCK (Responsive Rounded Content Card) ---
-right_card = ResponsiveRoundedCard(main_frame, bg_color=CARD_BG, radius=35)
+right_card = ResponsiveRoundedCard(main_frame, bg_color=CARD_BG, radius=35, border_color=CARD_BORDER, shadow_color=CARD_SHADOW)
 right_card.grid(row=0, column=1, padx=(20, 0), sticky="nsew")
 
 # --- FIXED LAYOUT ORDER (Crucial Fix) ---
@@ -409,7 +459,6 @@ Label(spelling_frame, textvariable=current_alphabet, font=FONT_VALUE, fg=TEXT_BL
 
 Label(spelling_frame, text="Current Word:", font=FONT_LABEL, fg=TEXT_MED, bg=CARD_BG).pack(anchor="w")
 Label(spelling_frame, textvariable=current_word, font=FONT_VALUE, fg=TEXT_BLACK, bg=CARD_BG, wraplength=450, justify="left").pack(anchor="w", pady=(0, 15))
-
 # Output Frame (Scrollable)
 output_frame = Frame(middle_frame, bg=CARD_BG)
 output_frame.pack(anchor="w", fill="both", expand=True)
@@ -418,7 +467,7 @@ dynamic_output_title = Label(output_frame, text="Current Output:", font=FONT_LAB
 dynamic_output_title.pack(anchor="w")
 
 # The text box will now ONLY take available space and add a scrollbar
-sentence_text_widget = tk.Text(output_frame, font=("Segoe UI", 32, "bold"), fg=TEXT_BLACK, bg=CARD_BG, wrap="word", bd=0, highlightthickness=0, padx=5, pady=5)
+sentence_text_widget = tk.Text(output_frame, font=("Segoe UI", 30, "bold"), fg=TEXT_BLACK, bg="#F8FAFF", wrap="word", bd=0, highlightthickness=0, padx=10, pady=8, relief="flat")
 text_scroll = tk.Scrollbar(output_frame, command=sentence_text_widget.yview)
 
 sentence_text_widget.pack(side="left", fill="both", expand=True, pady=(5, 0))
@@ -445,11 +494,11 @@ def toggle_pause():
     if is_paused.get() == "False":
         is_paused.set("True")
         pause_button.config_text("▶ Play")
-        pause_button.config_color(main="#85C1E9", hover="#5DADE2", shadow="#3498DB") 
+        pause_button.config_color(main="#94A3B8", hover="#64748B", shadow="#475569")
     else:
         is_paused.set("False")
         pause_button.config_text("⏸ Pause")
-        pause_button.config_color(main="#5DADE2", hover="#3498DB", shadow="#2980B9")
+        pause_button.config_color(main="#3B82F6", hover="#2563EB", shadow="#1D4ED8")
 
 def backspace():
     global word_buffer, sentence_parts
@@ -466,23 +515,23 @@ bottom_frame.grid_columnconfigure(1, weight=1)
 bottom_frame.grid_columnconfigure(2, weight=1)
 bottom_frame.grid_columnconfigure(3, weight=1)
 
-reset_button = RoundedButton(bottom_frame, "🔄 Reset", reset_sentence, width=160, bg_color=CARD_BG, color="#7FB3D5", hover_color="#5DADE2", shadow_color="#2980B9")
+reset_button = RoundedButton(bottom_frame, "🔄 Reset", reset_sentence, width=160, bg_color=CARD_BG, color="#64748B", hover_color="#475569", shadow_color="#334155")
 reset_button.grid(row=0, column=0, padx=5, pady=10)
 
-pause_button = RoundedButton(bottom_frame, "⏸ Pause", toggle_pause, width=160, bg_color=CARD_BG, color="#5DADE2", hover_color="#3498DB", shadow_color="#21618C")
+pause_button = RoundedButton(bottom_frame, "⏸ Pause", toggle_pause, width=160, bg_color=CARD_BG, color="#3B82F6", hover_color="#2563EB", shadow_color="#1D4ED8")
 pause_button.grid(row=0, column=1, padx=5, pady=10)
 
-backspace_button = RoundedButton(bottom_frame, "⌫ Backspace", backspace, width=175, bg_color=CARD_BG, color="#3498DB", hover_color="#2980B9", shadow_color="#1A5276")
+backspace_button = RoundedButton(bottom_frame, "⌫ Backspace", backspace, width=175, bg_color=CARD_BG, color=ACCENT_PURPLE, hover_color="#6D28D9", shadow_color="#4C1D95")
 backspace_button.grid(row=0, column=2, padx=5, pady=10)
 
-speak_button = RoundedButton(bottom_frame, "🔊 Speak", lambda: speak_text("".join(sentence_parts)), width=160, bg_color=CARD_BG, color="#2980B9", hover_color="#1F618D", shadow_color="#154360")
+speak_button = RoundedButton(bottom_frame, "🔊 Speak", lambda: speak_text("".join(sentence_parts)), width=160, bg_color=CARD_BG, color=ACCENT_EMERALD, hover_color="#047857", shadow_color="#065F46")
 speak_button.grid(row=0, column=3, padx=5, pady=10)
 
 # --- AI CHATBOT FRAME ---
 chat_frame = Frame(content_container, bg=BG_MAIN)
 # (Hidden by default, shown via toggle_view)
 
-chat_card = ResponsiveRoundedCard(chat_frame, bg_color=CARD_BG, radius=35)
+chat_card = ResponsiveRoundedCard(chat_frame, bg_color=CARD_BG, radius=35, border_color=CARD_BORDER, shadow_color=CARD_SHADOW)
 chat_card.pack(expand=True, fill="both")
 
 # --- CHAT UI STRUCTURE (Guaranteeing Button Visibility) ---
@@ -500,10 +549,10 @@ chat_input_frame = Frame(chat_main_container, bg=CARD_BG)
 chat_input_frame.pack(side="bottom", fill="x", pady=(10, 0))
 
 # 3. Chat Display (Middle - Takes remaining space)
-chat_display_frame = Frame(chat_main_container, bg="#FBFCFC", relief="flat")
+chat_display_frame = Frame(chat_main_container, bg="#F0F7FF", relief="flat")
 chat_display_frame.pack(side="top", expand=True, fill="both", padx=5, pady=5)
 
-chat_history = tk.Text(chat_display_frame, font=("Segoe UI", 12), state="disabled", wrap="word", bg="#FBFCFC", relief="flat", padx=20, pady=20)
+chat_history = tk.Text(chat_display_frame, font=("Segoe UI", 12), state="disabled", wrap="word", bg="#F0F7FF", relief="flat", padx=20, pady=20)
 chat_history.pack(side="left", fill="both", expand=True)
 
 chat_scroll = tk.Scrollbar(chat_display_frame, command=chat_history.yview)
@@ -512,16 +561,16 @@ chat_history.config(yscrollcommand=chat_scroll.set)
 
 # Setup tags for styling
 chat_history.tag_configure("bold_you", font=("Segoe UI", 13, "bold"), foreground=PRIMARY_BLUE)
-chat_history.tag_configure("bold_teacher", font=("Segoe UI", 13, "bold"), foreground="#16A085")
-chat_history.tag_configure("bold_system", font=("Segoe UI", 12, "bold"), foreground="#7F8C8D")
-chat_history.tag_configure("you", font=("Segoe UI", 12))
-chat_history.tag_configure("teacher", font=("Segoe UI", 12))
-chat_history.tag_configure("system", font=("Segoe UI", 11, "italic"), foreground="#95A5A6")
+chat_history.tag_configure("bold_teacher", font=("Segoe UI", 13, "bold"), foreground=ACCENT_TEAL)
+chat_history.tag_configure("bold_system", font=("Segoe UI", 12, "bold"), foreground=TEXT_LIGHT)
+chat_history.tag_configure("you", font=("Segoe UI", 12), foreground=TEXT_BLACK)
+chat_history.tag_configure("teacher", font=("Segoe UI", 12), foreground=TEXT_BLACK)
+chat_history.tag_configure("system", font=("Segoe UI", 11, "italic"), foreground=TEXT_LIGHT)
 
 def add_to_chat(sender, message):
     chat_history.config(state="normal")
     tag = sender.lower()
-    chat_history.insert(tk.END, f"● {sender}\n", f"bold_{tag}")
+    chat_history.insert(tk.END, f"◆ {sender}\n", f"bold_{tag}")
     chat_history.insert(tk.END, f"{message}\n\n", tag)
     chat_history.see(tk.END)
     chat_history.config(state="disabled")
@@ -555,14 +604,14 @@ def handle_voice_chat():
     def voice_thread():
         # Change button state to show recording
         root.after(0, lambda: voice_btn.config_text("🔴 Recording..."))
-        root.after(0, lambda: voice_btn.config_color(main="#E74C3C", hover="#C0392B", shadow="#943126"))
+        root.after(0, lambda: voice_btn.config_color(main="#DC2626", hover="#B91C1C", shadow="#7F1D1D"))
         
         # This will record until a pause is detected
         voice_text = get_voice_input()
         
         # Reset button state
         root.after(0, lambda: voice_btn.config_text("🎙️ Start Voice"))
-        root.after(0, lambda: voice_btn.config_color(main="#1ABC9C", hover="#16A085", shadow="#117864"))
+        root.after(0, lambda: voice_btn.config_color(main=ACCENT_TEAL, hover="#0F766E", shadow="#115E59"))
         
         if voice_text and voice_text not in ["Could not understand audio", "API unavailable"] and not voice_text.startswith("Error"):
             root.after(0, lambda: chat_entry.delete(0, tk.END))
@@ -574,14 +623,17 @@ def handle_voice_chat():
     threading.Thread(target=voice_thread, daemon=True).start()
 
 # --- INPUT AREA BUTTONS (Guaranteed placement) ---
-voice_btn = RoundedButton(chat_input_frame, "🎙️ Start Voice", handle_voice_chat, width=170, height=55, color="#1ABC9C", hover_color="#16A085", shadow_color="#117864", bg_color=CARD_BG)
+voice_btn = RoundedButton(chat_input_frame, "🎙️ Start Voice", handle_voice_chat, width=170, height=55, color=ACCENT_TEAL, hover_color="#0F766E", shadow_color="#115E59", bg_color=CARD_BG)
 voice_btn.pack(side="right", padx=10)
 
-send_btn = RoundedButton(chat_input_frame, "📤 Send", handle_chat_response, width=130, height=55, color=PRIMARY_BLUE, bg_color=CARD_BG)
+send_btn = RoundedButton(chat_input_frame, "📤 Send", handle_chat_response, width=130, height=55, color=PRIMARY_BLUE, hover_color="#1D4ED8", shadow_color="#1E3A8A", bg_color=CARD_BG)
 send_btn.pack(side="right")
 
-chat_entry = tk.Entry(chat_input_frame, font=("Segoe UI", 16), relief="flat", bg="#EBEDEF", insertbackground="black")
-chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 10), ipady=8)
+# Styled entry with a colored border frame
+chat_entry_frame = Frame(chat_input_frame, bg=CARD_BORDER, padx=2, pady=2)
+chat_entry_frame.pack(side="left", fill="x", expand=True, padx=(0, 10))
+chat_entry = tk.Entry(chat_entry_frame, font=("Segoe UI", 15), relief="flat", bg="#F0F7FF", insertbackground=TEXT_BLACK, fg=TEXT_BLACK)
+chat_entry.pack(fill="both", expand=True, ipady=10, padx=6)
 
 chat_entry.bind("<Return>", lambda e: handle_chat_response())
 
